@@ -1,0 +1,74 @@
+name: Deploy a Lambda
+
+on:
+    workflow_call:
+        inputs:
+            project:
+                description: Path to the Lambda's csproj; its assembly name must be bootstrap
+                type: string
+                required: true
+            function-name:
+                type: string
+                required: true
+            aws-region:
+                type: string
+                required: true
+            smoke-check:
+                description: Command run after the deploy, with FUNCTION_NAME and AWS credentials in its environment; a non-zero exit fails the run
+                type: string
+                required: true
+        secrets:
+            AWS_ROLE_ARN:
+                description: The repo's deploy role, trusting its main branch
+                required: true
+
+permissions:
+    contents: read
+    id-token: write
+
+# One deploy per function at a time; a rollback is the previous release's run, re-run.
+concurrency:
+    group: deploy-${{ inputs.function-name }}
+    cancel-in-progress: false
+
+jobs:
+    deploy:
+        # Native AOT builds on the architecture it runs on.
+        runs-on: ubuntu-24.04-arm
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+              with:
+                  global-json-file: global.json
+
+            - name: Install Native AOT prerequisites
+              run: sudo apt-get update && sudo apt-get install --yes clang zlib1g-dev
+
+            - name: Publish and zip
+              env:
+                  PROJECT: ${{ inputs.project }}
+              run: |
+                  dotnet publish "$PROJECT" --configuration Release --runtime linux-arm64 --output publish
+                  test -f publish/bootstrap
+                  (cd publish && zip --recurse-paths ../function.zip . --exclude '*.dbg' '*.pdb')
+
+            - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+              with:
+                  role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+                  aws-region: ${{ inputs.aws-region }}
+
+            - name: Deploy
+              env:
+                  FUNCTION_NAME: ${{ inputs.function-name }}
+              run: |
+                  aws lambda update-function-code --function-name "$FUNCTION_NAME" --zip-file fileb://function.zip > /dev/null
+                  aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME"
+
+            - name: Smoke check
+              env:
+                  FUNCTION_NAME: ${{ inputs.function-name }}
+                  SMOKE_CHECK: ${{ inputs.smoke-check }}
+              run: bash -euo pipefail -c "$SMOKE_CHECK"

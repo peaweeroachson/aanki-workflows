@@ -1,0 +1,36 @@
+name: CI
+
+on:
+    push:
+    pull_request:
+
+permissions:
+    contents: read
+
+jobs:
+    secret-scan:
+        uses: ./.github/workflows/secret-scan.yml
+
+    actionlint:
+        runs-on: ubuntu-24.04
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: Install actionlint
+              env:
+                  ACTIONLINT_VERSION: 1.7.12
+                  ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+              run: |
+                  curl -sSfL -o actionlint.tar.gz "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+                  echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum --check
+                  tar -xzf actionlint.tar.gz actionlint
+
+            - run: ./actionlint -color
+
+    # Proves the reusable build and test workflow against a minimal solution.
+    dotnet-build-test:
+        uses: ./.github/workflows/dotnet-build-test.yml
+        with:
+            working-directory: fixtures/dotnet

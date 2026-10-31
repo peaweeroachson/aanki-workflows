@@ -5,3 +5,7 @@ CLAUDE.local.md
 # Secrets and local config (docs/conventions.md#secrets-and-personal-data)
 .env
 .env.*
+
+# Build output
+bin/
+obj/
