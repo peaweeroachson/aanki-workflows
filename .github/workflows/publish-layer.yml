@@ -1,0 +1,72 @@
+name: Publish a Lambda layer
+
+on:
+    workflow_call:
+        inputs:
+            layer-name:
+                type: string
+                required: true
+            artifact-name:
+                description: Artifact uploaded by an earlier job of the caller; its contents become the layer's /opt
+                type: string
+                required: true
+            aws-region:
+                type: string
+                required: true
+            staging-bucket:
+                description: Bucket the zip goes through when it is over 50 MB, the direct upload limit
+                type: string
+                default: ""
+        secrets:
+            AWS_ROLE_ARN:
+                description: A role allowed to publish versions of this one layer
+                required: true
+        outputs:
+            layer-version:
+                description: The published layer version number
+                value: ${{ jobs.publish.outputs.layer-version }}
+
+permissions:
+    contents: read
+    id-token: write
+
+jobs:
+    publish:
+        runs-on: ubuntu-24.04
+        outputs:
+            layer-version: ${{ steps.publish.outputs.layer-version }}
+        steps:
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+              with:
+                  name: ${{ inputs.artifact-name }}
+                  path: layer
+
+            - name: Zip
+              run: (cd layer && zip --recurse-paths ../layer.zip .)
+
+            - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+              with:
+                  role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+                  aws-region: ${{ inputs.aws-region }}
+
+            - name: Publish
+              id: publish
+              env:
+                  LAYER_NAME: ${{ inputs.layer-name }}
+                  STAGING_BUCKET: ${{ inputs.staging-bucket }}
+              run: |
+                  size=$(stat --format=%s layer.zip)
+                  if [ "$size" -le 52428800 ]; then
+                      content=(--zip-file fileb://layer.zip)
+                  elif [ -n "$STAGING_BUCKET" ]; then
+                      key="layers/${LAYER_NAME}/${GITHUB_SHA}-${GITHUB_RUN_ID}.zip"
+                      aws s3 cp layer.zip "s3://${STAGING_BUCKET}/${key}" --no-progress
+                      content=(--content "S3Bucket=${STAGING_BUCKET},S3Key=${key}")
+                  else
+                      echo "::error::layer.zip is ${size} bytes, over the 50 MB direct upload limit, and no staging-bucket was given"
+                      exit 1
+                  fi
+                  version=$(aws lambda publish-layer-version --layer-name "$LAYER_NAME" "${content[@]}" \
+                      --compatible-runtimes provided.al2023 --query Version --output text)
+                  echo "layer-version=${version}" >> "$GITHUB_OUTPUT"
+                  echo "Published ${LAYER_NAME} version ${version}"

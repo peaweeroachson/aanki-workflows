@@ -1,0 +1,59 @@
+name: Terraform apply
+
+on:
+    workflow_call:
+        inputs:
+            working-directory:
+                description: Stack to apply, for example stacks/app
+                type: string
+                required: true
+            aws-region:
+                type: string
+                required: true
+            terraform-version:
+                type: string
+                default: 1.17.1
+        secrets:
+            AWS_ROLE_ARN:
+                description: The repo's apply role, trusting its main branch
+                required: true
+            ALERT_EMAIL:
+                description: Passed to Terraform as var.alert_email
+                required: false
+
+permissions:
+    contents: read
+    id-token: write
+
+# Applies run one at a time, in merge order.
+concurrency:
+    group: terraform-apply-${{ inputs.working-directory }}
+    cancel-in-progress: false
+
+jobs:
+    apply:
+        runs-on: ubuntu-24.04
+        defaults:
+            run:
+                working-directory: ${{ inputs.working-directory }}
+        env:
+            TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
+            TF_IN_AUTOMATION: "true"
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+              with:
+                  terraform_version: ${{ inputs.terraform-version }}
+                  terraform_wrapper: false
+
+            - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+              with:
+                  role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+                  aws-region: ${{ inputs.aws-region }}
+
+            - run: terraform init -input=false
+
+            - run: terraform apply -input=false -auto-approve

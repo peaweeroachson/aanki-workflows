@@ -1,0 +1,32 @@
+name: .NET build and test
+
+on:
+    workflow_call:
+        inputs:
+            working-directory:
+                description: Folder holding global.json and the solution
+                type: string
+                default: .
+
+permissions:
+    contents: read
+
+jobs:
+    build-test:
+        runs-on: ubuntu-24.04
+        defaults:
+            run:
+                working-directory: ${{ inputs.working-directory }}
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+              with:
+                  global-json-file: ${{ inputs.working-directory }}/global.json
+
+            - run: dotnet build --configuration Release
+
+            # global.json selects Microsoft Testing Platform, so `dotnet test` runs in its mode.
+            - run: dotnet test --configuration Release --no-build
